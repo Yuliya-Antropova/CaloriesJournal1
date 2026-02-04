@@ -10,9 +10,7 @@ class DbUserMiddleware(BaseMiddleware):
         self.cfg = cfg
 
     async def __call__(self, handler, event: TelegramObject, data: dict):
-        bot = data["bot"]
-
-        # message / callback / etc: get user & chat safely
+        # Aiogram 3 кладёт пользователя/чат в data
         user = data.get("event_from_user")
         chat = data.get("event_chat")
 
@@ -26,7 +24,11 @@ class DbUserMiddleware(BaseMiddleware):
         if tg_id in self.cfg.beta_whitelist:
             default_status = "beta"
 
-        user_row = self.db.get_or_create_user(tg_id=tg_id, chat_id=chat_id, default_status=default_status)
+        user_row = self.db.get_or_create_user(
+            tg_id=tg_id,
+            chat_id=chat_id,
+            default_status=default_status
+        )
         user_row = ensure_status(self.db, user_row)
 
         data["db"] = self.db
