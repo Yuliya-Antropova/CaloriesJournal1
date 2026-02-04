@@ -1,55 +1,89 @@
 from aiogram import Router
+from aiogram.filters import Command
 from aiogram.types import Message
-from datetime import datetime
-from bot.services.access import ensure_status
-from bot.texts import HOW_TO
+
+from bot.services.access import ensure_status, is_active
 
 router = Router()
 
-@router.message(lambda m: m.text == "/today")
-async def today(message: Message, db, user_row):
+
+@router.message(Command("help"))
+async def help_cmd(message: Message, db, user_row):
+    ensure_status(db, user_row)
+    await message.answer(
+        "Как пользоваться:\n"
+        "1) Фото еды + 1 фраза комментария (что это и примерно сколько/как приготовлено)\n"
+        "2) Лучше фото сверху, без сильных теней.\n"
+        "3) Если есть возможность — положи в кадр банковскую карту (референс размера).\n\n"
+        "Команды:\n"
+        "/today — итоги дня\n"
+        "/beta — статус доступа\n"
+        "/invite — промокод для рекомендаций\n"
+        "/promo <CODE> — применить промокод\n"
+        "/buy — оплата (если подключена)"
+    )
+
+
+@router.message(Command("today"))
+async def today_cmd(message: Message, db, user_row):
     user = ensure_status(db, user_row)
-    prof = db.get_profile(user.id)
-    if not prof:
-        await message.answer("Сначала /start")
-        return
+
     targets = db.get_targets(user.id)
-    low, mid, high = db.today_kcal_sum(user.id, datetime.utcnow())
-    rem = max(0, targets["kcal_target"] - mid)
+    if not targets:
+        await message.answer("Сначала заполни анкету: /start")
+        return
+
+    low, mid, high = db.today_kcal_sum(user.id, __import__("datetime").datetime.utcnow())
+    remaining_mid = max(0, targets["kcal_target"] - mid)
+    remaining_low = max(0, targets["kcal_target"] - high)
+
     await message.answer(
-        f"Сегодня: ~{mid} ккал (диапазон {low}–{high})\n"
+        f"За сегодня: ~{mid} ккал (диапазон {low}–{high})\n"
         f"Цель: {targets['kcal_target']} ккал\n"
-        f"Осталось: ~{rem} ккал."
+        f"Осталось: ~{remaining_mid} ккал (консервативно ≥{remaining_low})"
     )
 
-@router.message(lambda m: m.text == "/help")
-async def help_(message: Message):
-    await message.answer(HOW_TO)
 
-@router.message(lambda m: m.text == "/invite")
-async def invite(message: Message, db, user_row):
-    user = ensure_status(db, user_row)
-    code = db.get_or_create_promo_code(user.id)
+@router.message(Command("beta"))
+async def beta_cmd(message: Message, db, user_row):
+    u = ensure_status(db, user_row)
+    status = u.status
+    trial_end = u.trial_end or "—"
+    paid_until = u.paid_until or "—"
+
+    extra = ""
+    if not is_active(u):
+        extra = "\n\nДоступ ограничен. Для оплаты: /buy"
+
     await message.answer(
-        f"Твой промокод: {code}\n\n"
-        "Друг: -50% на 1-й месяц после триала.\n"
-        "Ты: +7 дней бесплатно после его первой оплаты.\n\n"
-        "Команда для друга: /promo " + code
+        f"Статус: {status}\n"
+        f"Триал до: {trial_end}\n"
+        f"Оплачено до: {paid_until}"
+        f"{extra}"
     )
 
-@router.message(lambda m: m.text and m.text.startswith("/promo"))
-async def promo(message: Message, db, user_row):
-    user = ensure_status(db, user_row)
-    parts = (message.text or "").split()
-    if len(parts) != 2:
+
+@router.message(Command("invite"))
+async def invite_cmd(message: Message, db, user_row):
+    u = ensure_status(db, user_row)
+    code = db.get_or_create_promo_code(u.id)
+    await message.answer(
+        f"Твой промокод: <code>{code}</code>\n\n"
+        "Условия:\n"
+        "— Новому пользователю: -50% на 1 месяц (при первой оплате)\n"
+        "— Тебе: +7 дней после первой оплаты приглашённого"
+    )
+
+
+@router.message(Command("promo"))
+async def promo_cmd(message: Message, db, user_row):
+    u = ensure_status(db, user_row)
+    text = (message.text or "").strip()
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
         await message.answer("Формат: /promo NIGMA-XXXXXX")
         return
-    code = parts[1].strip().upper()
-    ok, msg, _ = db.apply_promo_for_new_user(user.id, code)
-    await message.answer(msg if ok else ("Ошибка: " + msg))
 
-@router.message(lambda m: m.text == "/beta")
-async def beta(message: Message, db, user_row):
-    user = ensure_status(db, user_row)
-    u = ensure_status(db, user_row)
-await message.answer(f"Статус: {u.status}\nТриал до: {u.trial_end}\nОплачено до: {u.paid_until}\n\nДля оплаты: /buy")
+    code = parts[1].strip().upper()
+    ok, msg, _referrer = db.apply_promo_for_new_user(u.id, code)
+    await message.answer(msg)
