@@ -1,6 +1,7 @@
 import asyncio
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from bot.config import load_config
@@ -17,7 +18,10 @@ async def main():
     cfg = load_config()
     db = DB(cfg.db_path)
 
-    bot = Bot(token=cfg.bot_token, parse_mode=ParseMode.HTML)
+    bot = Bot(
+        token=cfg.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher()
 
     dp.update.middleware(DbUserMiddleware(db=db, cfg=cfg))
@@ -27,7 +31,6 @@ async def main():
     dp.include_router(misc_router)
     dp.include_router(payments_router)
 
-    # polling mode
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
