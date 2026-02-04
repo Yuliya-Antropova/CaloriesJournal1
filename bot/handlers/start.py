@@ -75,7 +75,7 @@ async def activity(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Onboarding.goal)
 
 @router.callback_query(Onboarding.goal, F.data.startswith("goal:"))
-async def goal(cb: CallbackQuery, state: FSMContext, db):
+async def goal(cb: CallbackQuery, state: FSMContext, db, user_id: int):
     goal = cb.data.split(":",1)[1]
     await state.update_data(goal=goal)
     data = await state.get_data()
@@ -91,9 +91,9 @@ async def goal(cb: CallbackQuery, state: FSMContext, db):
         "palm_len_cm": None,
         "palm_w_cm": None,
     }
-    db.upsert_profile(cb.from_user.id_db, **prof)  # id_db injected in middleware
+    db.upsert_profile(user_id, **prof)  # id_db injected in middleware
     kcal, prot, fib = compute_targets(prof["sex"], prof["age"], prof["height_cm"], prof["weight_kg"], prof["activity"], prof["goal"])
-    db.upsert_targets(cb.from_user.id_db, kcal, prot, fib)
+    db.upsert_targets(user_id, kcal, prot, fib)
 
     await cb.message.answer(
         f"Готово. Дневная цель: {kcal} ккал.\n"

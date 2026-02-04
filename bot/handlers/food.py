@@ -17,13 +17,13 @@ def _daily_tip_once(db, user_id: int, key: str) -> bool:
     return True
 
 @router.message(F.photo)
-async def photo_entry(message: Message, db):
-    user = ensure_status(db, db.get_or_create_user(message.from_user.id, message.chat.id, default_status=message.from_user.default_status))
-    if not is_active(user):
+async def photo_entry(message: Message, db, user_row):
+    user = ensure_status(db, user_row)
+if not is_active(user):
         await message.answer("Доступ ограничен: триал закончился. Чтобы продолжить — /buy")
         return
 
-    profile = db.get_profile(message.from_user.id_db)
+    profile = db.get_profile(user.id)
     if not profile:
         await message.answer("Сначала заполни анкету: /start")
         return
@@ -37,7 +37,7 @@ async def photo_entry(message: Message, db):
     ts = datetime.utcnow().replace(microsecond=0).isoformat()
     photo_file_id = message.photo[-1].file_id
     entry_id = db.add_food_entry(
-        user_id=message.from_user.id_db,
+        user_id=user.id,
         ts_iso=ts,
         text=caption,
         photo_file_id=photo_file_id,
@@ -46,8 +46,8 @@ async def photo_entry(message: Message, db):
         conf=ar.conf, err_low=ar.err_low, err_high=ar.err_high
     )
 
-    targets = db.get_targets(message.from_user.id_db)
-    low, mid, high = db.today_kcal_sum(message.from_user.id_db, datetime.utcnow())
+    targets = db.get_targets(user.id)
+    low, mid, high = db.today_kcal_sum(user.id, datetime.utcnow())
     remaining_low = max(0, targets["kcal_target"] - high)
     remaining_mid = max(0, targets["kcal_target"] - mid)
 
@@ -62,7 +62,7 @@ async def photo_entry(message: Message, db):
         f"Осталось: ~{remaining_mid} ккал (консервативно ≥{remaining_low})\n"
     )
 
-    if (not ar.has_reference) and _daily_tip_once(db, message.from_user.id_db, "tip_reference"):
+    if (not ar.has_reference) and _daily_tip_once(db, user.id, "tip_reference"):
         resp += "\nСовет: для меньшей погрешности делай фото строго сверху и клади банковскую карту в кадр."
 
     if ar.needs_refine:
@@ -71,14 +71,14 @@ async def photo_entry(message: Message, db):
         await message.answer(resp)
 
 @router.message(F.text)
-async def text_entry(message: Message, db):
+async def text_entry(message: Message, db, user_row):
     if message.text and message.text.startswith("/"):
         return
-    user = ensure_status(db, db.get_or_create_user(message.from_user.id, message.chat.id, default_status=message.from_user.default_status))
-    if not is_active(user):
+    user = ensure_status(db, user_row)
+if not is_active(user):
         await message.answer("Доступ ограничен: триал закончился. Чтобы продолжить — /buy")
         return
-    profile = db.get_profile(message.from_user.id_db)
+    profile = db.get_profile(user.id)
     if not profile:
         await message.answer("Сначала заполни анкету: /start")
         return
@@ -89,7 +89,7 @@ async def text_entry(message: Message, db):
     ar = analyze(text, has_photo=False)
     ts = datetime.utcnow().replace(microsecond=0).isoformat()
     db.add_food_entry(
-        user_id=message.from_user.id_db,
+        user_id=user.id,
         ts_iso=ts,
         text=text,
         photo_file_id=None,
@@ -97,8 +97,8 @@ async def text_entry(message: Message, db):
         kcal_low=ar.kcal_low, kcal_high=ar.kcal_high, kcal_mid=ar.kcal_mid,
         conf=ar.conf, err_low=ar.err_low, err_high=ar.err_high
     )
-    targets = db.get_targets(message.from_user.id_db)
-    low, mid, high = db.today_kcal_sum(message.from_user.id_db, datetime.utcnow())
+    targets = db.get_targets(user.id)
+    low, mid, high = db.today_kcal_sum(user.id, datetime.utcnow())
     remaining_mid = max(0, targets["kcal_target"] - mid)
     err_pct_high = int(round(ar.err_high * 100))
     await message.answer(
@@ -107,7 +107,7 @@ async def text_entry(message: Message, db):
     )
 
 @router.callback_query(F.data.startswith("refine:"))
-async def refine(cb: CallbackQuery, db):
+async def refine(cb: CallbackQuery, db, user_row):
     # refine:<kind>:<val>:<entry_id>
     parts = cb.data.split(":")
     if len(parts) != 4:
@@ -120,7 +120,7 @@ async def refine(cb: CallbackQuery, db):
         await cb.answer("Ошибка")
         return
 
-    entry = db.get_food_entry(entry_id, cb.from_user.id_db)
+    entry = db.get_food_entry(entry_id, user.id)
     if not entry:
         await cb.answer("Запись не найдена")
         return
@@ -142,11 +142,11 @@ async def refine(cb: CallbackQuery, db):
     )
 
     ar1 = apply_refinement(ar0, kind, val)
-    db.update_food_entry(entry_id, cb.from_user.id_db, to_json(ar1),
+    db.update_food_entry(entry_id, user.id, to_json(ar1),
                          ar1.kcal_low, ar1.kcal_high, ar1.kcal_mid, ar1.conf, ar1.err_low, ar1.err_high)
 
-    targets = db.get_targets(cb.from_user.id_db)
-    low, mid, high = db.today_kcal_sum(cb.from_user.id_db, datetime.utcnow())
+    targets = db.get_targets(user.id)
+    low, mid, high = db.today_kcal_sum(user.id, datetime.utcnow())
     remaining_mid = max(0, targets["kcal_target"] - mid)
     err_pct_high = int(round(ar1.err_high * 100))
 

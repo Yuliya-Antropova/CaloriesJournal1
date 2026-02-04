@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -107,8 +108,22 @@ class UserRow:
 
 class DB:
     def __init__(self, path: str):
-        self.path = path
-        self.conn = sqlite3.connect(self.path)
+        self.path = (path or "bot.db").strip()
+
+        # If DB_PATH points to a directory that doesn't exist (e.g. /data/bot.db),
+        # create the directory to prevent sqlite "unable to open database file".
+        dirn = os.path.dirname(self.path)
+        if dirn and not os.path.exists(dirn):
+            os.makedirs(dirn, exist_ok=True)
+
+        try:
+            self.conn = sqlite3.connect(self.path)
+        except sqlite3.OperationalError as e:
+            raise sqlite3.OperationalError(
+                f"unable to open database file: path='{self.path}'. "
+                f"Fix: set DB_PATH to a writable path (e.g. /data/bot.db) and mount Railway Volume to /data."
+            ) from e
+
         self.conn.row_factory = sqlite3.Row
         self._init()
 
@@ -232,7 +247,6 @@ class DB:
         c = int(rows["c"] or 0)
         return a,b,c
 
-    # Meta
     def get_meta(self, user_id: int, key: str) -> Optional[str]:
         row = self.conn.execute("SELECT value FROM user_meta WHERE user_id=? AND key=?", (user_id, key)).fetchone()
         return row["value"] if row else None
@@ -246,7 +260,6 @@ class DB:
             self.conn.execute("INSERT INTO user_meta (user_id, key, value, updated_at) VALUES (?,?,?,?)", (user_id, key, value, now))
         self.conn.commit()
 
-    # Promo/referrals
     def get_or_create_promo_code(self, user_id: int) -> str:
         row = self.conn.execute("SELECT code FROM promo_codes WHERE user_id=?", (user_id,)).fetchone()
         if row:
@@ -305,7 +318,6 @@ class DB:
         self.conn.execute("INSERT INTO reward_ledger (user_id, days, reason, created_at) VALUES (?,?,?,?)",
                           (referrer_user_id, days, f"referral:{referred_user_id}", self.now_iso()))
         self.conn.execute("UPDATE referrals SET status='rewarded' WHERE id=?", (int(row["id"]),))
-        # extend paid_until if exists, else start from now
         now = datetime.utcnow()
         u = self.conn.execute("SELECT paid_until FROM users WHERE id=?", (referrer_user_id,)).fetchone()
         if u and u["paid_until"]:
