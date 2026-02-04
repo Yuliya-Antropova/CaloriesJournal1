@@ -77,7 +77,7 @@ async def photo_entry(message: Message, db, user_row):
 "
     )
 
-    if (not ar.has_reference) and _daily_tip_once(db, user.id, "tip_reference"):
+    if (not ar.has_reference) and _daily_tip_once(db, user.id, "tip_reference"): and _daily_tip_once(db, user.id, "tip_reference"):
         resp += "
 Совет: для меньшей погрешности делай фото строго сверху и клади банковскую карту в кадр."
 
