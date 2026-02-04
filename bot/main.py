@@ -15,13 +15,11 @@ from bot.handlers.payments import router as payments_router
 
 async def main():
     cfg = load_config()
-
     db = DB(cfg.db_path)
 
     bot = Bot(token=cfg.bot_token, parse_mode=ParseMode.HTML)
     dp = Dispatcher()
 
-    # Middleware injects db and user_row into handler kwargs
     dp.update.middleware(DbUserMiddleware(db=db, cfg=cfg))
 
     dp.include_router(start_router)
@@ -29,9 +27,8 @@ async def main():
     dp.include_router(misc_router)
     dp.include_router(payments_router)
 
-    # Important for polling mode (no webhook)
+    # polling mode
     await bot.delete_webhook(drop_pending_updates=True)
-
     await dp.start_polling(bot)
 
 
