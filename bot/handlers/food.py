@@ -83,4 +83,103 @@ async def photo_entry(message: Message, db, user_row):
             reply_markup=refine_keyboard(ar.refine_kind or "sauce", entry_id),
         )
     else:
-        a
+        await message.answer(resp)
+
+
+@router.message(F.text)
+async def text_entry(message: Message, db, user_row):
+    # не перехватываем команды
+    if message.text and message.text.startswith("/"):
+        return
+
+    user = ensure_status(db, user_row)
+    if not is_active(user):
+        await message.answer("Доступ ограничен: триал закончился. Чтобы продолжить — /buy")
+        return
+
+    profile = db.get_profile(user.id)
+    if not profile:
+        await message.answer("Сначала заполни анкету: /start")
+        return
+
+    text = (message.text or "").strip()
+    if len(text) < 3:
+        return
+
+    ar = analyze(text, has_photo=False)
+    ts = datetime.utcnow().replace(microsecond=0).isoformat()
+
+    db.add_food_entry(
+        user_id=user.id,
+        ts_iso=ts,
+        text=text,
+        photo_file_id=None,
+        parsed_json=to_json(ar),
+        kcal_low=ar.kcal_low,
+        kcal_high=ar.kcal_high,
+        kcal_mid=ar.kcal_mid,
+        conf=ar.conf,
+        err_low=ar.err_low,
+        err_high=ar.err_high,
+    )
+
+    targets = db.get_targets(user.id)
+    low, mid, high = db.today_kcal_sum(user.id, datetime.utcnow())
+    remaining_mid = max(0, targets["kcal_target"] - mid)
+    err_pct_high = int(round(ar.err_high * 100))
+
+    await message.answer(
+        f"Ок. ~{ar.kcal_mid} ккал (диапазон {ar.kcal_low}–{ar.kcal_high}), "
+        f"погрешность до ±{err_pct_high}%.\n"
+        f"Осталось на день: ~{remaining_mid} ккал."
+    )
+
+
+@router.callback_query(F.data.startswith("refine:"))
+async def refine(cb: CallbackQuery, db, user_row):
+    # refine:<kind>:<val>:<entry_id>
+    parts = (cb.data or "").split(":")
+    if len(parts) != 4:
+        await cb.answer("Ошибка формата")
+        return
+
+    kind, val, entry_id_s = parts[1], parts[2], parts[3]
+    try:
+        entry_id = int(entry_id_s)
+    except ValueError:
+        await cb.answer("Ошибка")
+        return
+
+    user = ensure_status(db, user_row)
+    entry = db.get_food_entry(entry_id, user.id)
+    if not entry:
+        await cb.answer("Запись не найдена")
+        return
+
+    ar = from_json(entry["parsed_json"])
+    ar2 = apply_refinement(ar, kind, val)
+
+    db.update_food_entry(
+        entry_id=entry_id,
+        user_id=user.id,
+        parsed_json=to_json(ar2),
+        kcal_low=ar2.kcal_low,
+        kcal_high=ar2.kcal_high,
+        kcal_mid=ar2.kcal_mid,
+        conf=ar2.conf,
+        err_low=ar2.err_low,
+        err_high=ar2.err_high,
+    )
+
+    targets = db.get_targets(user.id)
+    low, mid, high = db.today_kcal_sum(user.id, datetime.utcnow())
+    remaining_low = max(0, targets["kcal_target"] - high)
+    remaining_mid = max(0, targets["kcal_target"] - mid)
+
+    await cb.message.answer(
+        "Пересчитал.\n"
+        f"Калории: ~{ar2.kcal_mid} ккал (диапазон {ar2.kcal_low}–{ar2.kcal_high})\n"
+        f"За сегодня: ~{mid} ккал\n"
+        f"Осталось: ~{remaining_mid} ккал (консервативно ≥{remaining_low})"
+    )
+    await cb.answer("Ок")
